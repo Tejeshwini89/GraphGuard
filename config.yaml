@@ -13,9 +13,10 @@ dataset:
 
 splits:
   strategy: temporal
-  train_end: null
-  validation_end: null
-  test_start: null
+  train_end: 29
+  validation_start: 30
+  validation_end: 34
+  test_start: 35
 
 baseline:
   model: xgboost
