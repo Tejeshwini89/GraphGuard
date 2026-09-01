@@ -1,0 +1,15 @@
+numpy
+pandas
+scikit-learn
+xgboost
+pyyaml
+networkx
+matplotlib
+seaborn
+pytest
+torch
+torch-geometric
+neo4j
+fastapi
+uvicorn[standard]
+pydantic
