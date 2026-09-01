@@ -7,12 +7,13 @@ from typing import Any
 
 import torch
 from torch_geometric.data import Data
-from torch_geometric.datasets import EllipticBitcoinDataset
+
+from graphguard.elliptic import load_elliptic_graph
 
 
 @dataclass(frozen=True)
 class DatasetSummary:
-    """Reproducible summary of the loaded Elliptic graph."""
+    """Reproducible summary of the normalized Elliptic graph."""
 
     nodes: int
     edges: int
@@ -29,21 +30,8 @@ class DatasetSummary:
     feature_missing_value_count: int
 
 
-def _time_steps(data: Data) -> torch.Tensor | None:
-    """Return time-step values when exposed by the dataset object."""
-    value = getattr(data, "time_step", None)
-    if value is not None:
-        return value.to(torch.long)
-
-    # EllipticBitcoinDataset keeps time_step in the first feature column
-    # internally when constructing x only from columns 2 onward, so a generic
-    # Data object does not necessarily expose it. The temporal dataset exposes
-    # the information through its per-timestep construction instead.
-    return None
-
-
 def summarize_graph(data: Data) -> DatasetSummary:
-    """Compute deterministic dataset statistics from a PyG Data object."""
+    """Compute deterministic dataset statistics from a normalized graph."""
     labels = data.y.to(torch.long)
     known = labels[labels >= 0]
     unknown = int((labels < 0).sum().item())
@@ -51,8 +39,8 @@ def summarize_graph(data: Data) -> DatasetSummary:
     licit = int((known == 0).sum().item())
     known_count = int(known.numel())
 
-    time_steps = _time_steps(data)
-    if time_steps is None or time_steps.numel() == 0:
+    time_steps = data.time_step.to(torch.long)
+    if time_steps.numel() == 0:
         min_time = max_time = None
         time_counts: dict[str, int] = {}
     else:
@@ -84,7 +72,7 @@ def summarize_graph(data: Data) -> DatasetSummary:
 
 
 def audit_labels(data: Data) -> dict[str, Any]:
-    """Return label counts and basic label invariants."""
+    """Return normalized label counts and invariants."""
     counts = Counter(int(v) for v in data.y.tolist())
     return {
         "label_counts": {str(k): v for k, v in sorted(counts.items())},
@@ -94,12 +82,8 @@ def audit_labels(data: Data) -> dict[str, Any]:
 
 
 def run_forensics(root: str | Path) -> dict[str, Any]:
-    """Load the public PyG dataset and return a machine-readable audit."""
-    dataset = EllipticBitcoinDataset(root=str(root))
-    if len(dataset) != 1:
-        raise ValueError(f"Expected one graph, found {len(dataset)}")
-
-    graph = dataset[0]
+    """Load the Elliptic graph and return a machine-readable normalized audit."""
+    graph = load_elliptic_graph(root)
     summary = summarize_graph(graph)
     return {
         "dataset": "elliptic-bitcoin",
@@ -109,6 +93,7 @@ def run_forensics(root: str | Path) -> dict[str, Any]:
         "supervised_labels": [0, 1],
         "unknown_label": -1,
         "notes": [
+            "Raw labels are normalized as class 1 -> illicit, class 2 -> licit, unknown -> -1.",
             "Unknown labels are excluded from supervised training/evaluation.",
             "Primary experiments must use chronological rather than random splitting.",
             "Feature semantics must be audited before selecting model inputs.",
