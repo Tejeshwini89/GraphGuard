@@ -115,9 +115,9 @@ def train_graphsage(
 ) -> tuple[GraphSAGE, FeatureScaler, dict[str, float | int]]:
     """Train with masked temporal supervision and validation early stopping.
 
-    This uses a transductive temporal protocol: graph structure/features from
-    later periods can participate in message passing, but later labels are never
-    used for optimization, threshold selection, or checkpoint selection.
+    This is a transductive temporal protocol: later graph structure/features can
+    participate in message passing, but later labels are never used for fitting,
+    threshold selection, or checkpoint selection.
     """
     if epochs < 1 or patience < 1:
         raise ValueError("epochs and patience must be positive")
@@ -156,7 +156,8 @@ def train_graphsage(
 
         model.eval()
         with torch.no_grad():
-            validation = evaluate_logits(logits, y, validation_mask)
+            validation_logits = model(x, data.edge_index)
+            validation = evaluate_logits(validation_logits, y, validation_mask)
         if validation.pr_auc > best_val_pr_auc + 1e-6:
             best_val_pr_auc = validation.pr_auc
             best_epoch = epoch
