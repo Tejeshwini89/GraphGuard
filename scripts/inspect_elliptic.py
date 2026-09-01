@@ -31,11 +31,19 @@ def main() -> None:
         "illicit_rate_among_known",
         "min_time_step",
         "max_time_step",
+        "feature_constant_count",
+        "feature_missing_value_count",
     ):
         print(f"{key}: {summary[key]}")
     print("time_step_counts:")
     for timestep, count in summary["time_step_counts"].items():
         print(f"  {timestep}: {count}")
+    print("time_step_label_counts:")
+    for timestep, counts in summary["time_step_label_counts"].items():
+        print(
+            f"  {timestep}: unknown={counts['unknown']}, "
+            f"licit={counts['licit']}, illicit={counts['illicit']}"
+        )
     print(f"labels: {report['labels']['label_counts']}")
 
     output = Path(args.output)
