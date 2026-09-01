@@ -12,6 +12,12 @@ from torch_geometric.datasets import EllipticBitcoinDataset
 RAW_CLASS_MAP = {"unknown": -1, "1": 1, "2": 0}
 
 
+def _writable_int64(values: pd.Series) -> Tensor:
+    """Convert a pandas column to an owned, writable int64 tensor."""
+    array = values.to_numpy(dtype="int64", copy=True)
+    return torch.from_numpy(array)
+
+
 def load_elliptic_graph(root: str | Path = "data/raw") -> Data:
     """Load the Elliptic graph with labels/time normalized from raw CSVs.
 
@@ -34,8 +40,8 @@ def load_elliptic_graph(root: str | Path = "data/raw") -> Data:
             f"got {features.shape[1]} columns for {graph.num_node_features} model features"
         )
 
-    tx_ids = features.iloc[:, 0].astype("int64")
-    time_step = torch.from_numpy(features.iloc[:, 1].to_numpy(dtype="int64"))
+    tx_ids = _writable_int64(features.iloc[:, 0])
+    time_step = _writable_int64(features.iloc[:, 1])
 
     classes = pd.read_csv(class_path)
     if list(classes.columns) != ["txId", "class"]:
@@ -48,12 +54,12 @@ def load_elliptic_graph(root: str | Path = "data/raw") -> Data:
         raise ValueError(f"Unexpected raw class values: {unknown_classes}")
 
     label_by_tx = dict(zip(classes["txId"], classes["class"], strict=True))
-    missing_labels = [tx_id for tx_id in tx_ids if tx_id not in label_by_tx]
+    missing_labels = [tx_id.item() for tx_id in tx_ids if tx_id.item() not in label_by_tx]
     if missing_labels:
         raise ValueError(f"Missing labels for {len(missing_labels)} transactions")
 
     labels = torch.tensor(
-        [RAW_CLASS_MAP[label_by_tx[tx_id]] for tx_id in tx_ids],
+        [RAW_CLASS_MAP[label_by_tx[tx_id.item()]] for tx_id in tx_ids],
         dtype=torch.long,
     )
 
@@ -65,5 +71,5 @@ def load_elliptic_graph(root: str | Path = "data/raw") -> Data:
         edge_index=graph.edge_index.long(),
         y=labels,
         time_step=time_step,
-        tx_id=torch.from_numpy(tx_ids.to_numpy(dtype="int64")),
+        tx_id=tx_ids,
     )
