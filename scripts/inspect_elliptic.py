@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+import torch
 from torch_geometric.datasets import EllipticBitcoinDataset
 
 
@@ -14,9 +15,9 @@ def summarize(root: Path, output: Path | None = None) -> dict:
     dataset = EllipticBitcoinDataset(root=str(root))
     graph = dataset[0]
 
-    # The PyG graph stores the 165 model features but does not expose the
-    # original time_step column as graph.time_step. Read the raw feature file
-    # so temporal distributions are audited from the source data itself.
+    # PyG uses the raw feature file to construct x from columns 2 onward;
+    # time_step is therefore audited from the original source column instead
+    # of being assumed to be part of graph.x.
     feature_path = Path(dataset.raw_paths[0])
     features = pd.read_csv(feature_path, header=None)
     features = features.rename(columns={0: "txId", 1: "time_step"})
@@ -25,11 +26,9 @@ def summarize(root: Path, output: Path | None = None) -> dict:
     classes = pd.read_csv(class_path)
     class_counts_raw = Counter(classes["class"].astype(str))
 
-    time_counts = (
-        features["time_step"].astype(int).value_counts().sort_index().to_dict()
-    )
+    time_counts = features["time_step"].astype(int).value_counts().sort_index().to_dict()
 
-    labels = graph.y.to(torch_long := getattr(__import__("torch"), "long"))
+    labels = graph.y.to(torch.long)
     known = labels[labels >= 0]
     unknown = int((labels < 0).sum().item())
     illicit = int((known == 1).sum().item())
@@ -52,10 +51,10 @@ def summarize(root: Path, output: Path | None = None) -> dict:
         "time_step_count": len(time_counts),
         "time_step_counts": {str(k): int(v) for k, v in time_counts.items()},
         "raw_class_counts": dict(class_counts_raw),
-        "feature_columns_in_model": "columns 2 onward from the raw feature file",
         "raw_feature_columns": int(features.shape[1]),
+        "model_feature_columns": int(graph.num_node_features),
         "notes": [
-            "The raw time_step column is metadata used for temporal evaluation, not a model feature.",
+            "time_step is metadata used for temporal evaluation and is not included in graph.x.",
             "Unknown labels are excluded from supervised training/evaluation.",
             "Temporal split boundaries must be selected before model training.",
             "No random split is used as the primary benchmark.",
@@ -73,11 +72,11 @@ def summarize(root: Path, output: Path | None = None) -> dict:
     for timestep, count in report["time_step_counts"].items():
         print(f"  {timestep}: {count}")
     print(f"raw_class_counts: {report['raw_class_counts']}")
+    print(f"report: {output.resolve() if output is not None else '(not saved)'}")
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        print(f"report: {output.resolve()}")
 
     return report
 
