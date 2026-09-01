@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import numpy as np
-from sklearn.inspection import permutation_importance
 from xgboost import XGBClassifier
 
 
@@ -54,29 +53,34 @@ def make_xgb(random_state: int, n_estimators: int, max_depth: int, learning_rate
     )
 
 
-def grouped_drop_importance(model: XGBClassifier, x: np.ndarray, y: np.ndarray,
-                             groups: Iterable[FeatureGroup]) -> dict[str, float]:
-    """Measure performance loss when a trained model is evaluated with one feature group zeroed.
+def grouped_drop_importance(model: XGBClassifier, x: np.ndarray,
+                            groups: Iterable[FeatureGroup]) -> dict[str, float]:
+    """Measure mean absolute probability shift after zeroing a feature group.
 
-    This is a diagnostic, not a causal attribution method. The model is not retrained.
+    Diagnostic only: the trained model is not retrained. Interpret cautiously because
+    zero may not represent a neutral value for every raw feature.
     """
-    baseline = float(model.predict_proba(x)[:, 1].mean())
-    _ = baseline  # retain an explicit baseline prediction pass for predictable model behavior.
+    baseline = model.predict_proba(x)[:, 1]
     importances: dict[str, float] = {}
     for group in groups:
         masked = x.copy()
         masked[:, group.start:group.end] = 0.0
-        importances[group.name] = float(np.abs(model.predict_proba(x)[:, 1] - model.predict_proba(masked)[:, 1]).mean())
+        shifted = model.predict_proba(masked)[:, 1]
+        importances[group.name] = float(np.abs(baseline - shifted).mean())
     return importances
 
 
-def grouped_permutation_importance(model: XGBClassifier, x: np.ndarray, y: np.ndarray,
+def grouped_permutation_importance(model: XGBClassifier, x: np.ndarray,
                                    groups: Iterable[FeatureGroup], *, random_state: int,
                                    n_repeats: int = 3) -> dict[str, dict[str, float]]:
-    """Estimate group importance by jointly permuting columns in each feature group."""
+    """Estimate group importance by jointly permuting columns within each group.
+
+    Returns mean/std of absolute probability shift. This is diagnostic only and is not
+    a causal attribution or model-selection criterion.
+    """
+    if n_repeats < 1:
+        raise ValueError("n_repeats must be positive")
     baseline = model.predict_proba(x)[:, 1]
-    baseline_ap = float(np.mean(baseline[y == 1])) if np.any(y == 1) else 0.0
-    _ = baseline_ap
     rng = np.random.default_rng(random_state)
     results: dict[str, dict[str, float]] = {}
     for group in groups:
@@ -85,7 +89,8 @@ def grouped_permutation_importance(model: XGBClassifier, x: np.ndarray, y: np.nd
             permuted = x.copy()
             row_order = rng.permutation(x.shape[0])
             permuted[:, group.start:group.end] = x[row_order, group.start:group.end]
-            deltas.append(float(np.mean(np.abs(baseline - model.predict_proba(permuted)[:, 1]))))
+            shifted = model.predict_proba(permuted)[:, 1]
+            deltas.append(float(np.abs(baseline - shifted).mean()))
         results[group.name] = {
             "mean_probability_shift": float(np.mean(deltas)),
             "std_probability_shift": float(np.std(deltas)),
