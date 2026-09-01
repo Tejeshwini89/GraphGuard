@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ class DatasetSummary:
     min_time_step: int | None
     max_time_step: int | None
     time_step_counts: dict[str, int]
+    time_step_label_counts: dict[str, dict[str, int]]
     feature_constant_count: int
     feature_missing_value_count: int
 
@@ -43,11 +44,24 @@ def summarize_graph(data: Data) -> DatasetSummary:
     if time_steps.numel() == 0:
         min_time = max_time = None
         time_counts: dict[str, int] = {}
+        time_label_counts: dict[str, dict[str, int]] = {}
     else:
         values, counts = torch.unique(time_steps, sorted=True, return_counts=True)
         min_time = int(values.min().item())
         max_time = int(values.max().item())
         time_counts = {str(int(v.item())): int(c.item()) for v, c in zip(values, counts)}
+
+        grouped: dict[int, Counter[int]] = defaultdict(Counter)
+        for timestep, label in zip(time_steps.tolist(), labels.tolist()):
+            grouped[int(timestep)][int(label)] += 1
+        time_label_counts = {
+            str(timestep): {
+                "unknown": counts_by_label.get(-1, 0),
+                "licit": counts_by_label.get(0, 0),
+                "illicit": counts_by_label.get(1, 0),
+            }
+            for timestep, counts_by_label in sorted(grouped.items())
+        }
 
     x = data.x
     finite = torch.isfinite(x)
@@ -66,6 +80,7 @@ def summarize_graph(data: Data) -> DatasetSummary:
         min_time_step=min_time,
         max_time_step=max_time,
         time_step_counts=time_counts,
+        time_step_label_counts=time_label_counts,
         feature_constant_count=feature_constant_count,
         feature_missing_value_count=feature_missing_value_count,
     )
@@ -97,6 +112,7 @@ def run_forensics(root: str | Path) -> dict[str, Any]:
             "Unknown labels are excluded from supervised training/evaluation.",
             "Primary experiments must use chronological rather than random splitting.",
             "Feature semantics must be audited before selecting model inputs.",
+            "Per-timestep class counts are recorded before freezing temporal boundaries.",
         ],
     }
 
