@@ -32,6 +32,10 @@ models:
     hidden_channels: 128
     layers: 2
     dropout: 0.25
+    epochs: 100
+    learning_rate: 0.003
+    weight_decay: 0.0001
+    patience: 12
   gat:
     hidden_channels: 64
     heads: 4
