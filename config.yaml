@@ -1,0 +1,47 @@
+project:
+  name: GraphGuard
+  seed: 42
+
+dataset:
+  name: elliptic-bitcoin
+  root: data/raw
+  min_timestep: 1
+  max_timestep: 49
+  unknown_label: -1
+  illicit_label: 1
+  licit_label: 0
+
+splits:
+  strategy: temporal
+  train_end: null
+  validation_end: null
+  test_start: null
+
+baseline:
+  model: xgboost
+  random_state: 42
+  n_estimators: 400
+  max_depth: 6
+  learning_rate: 0.05
+  subsample: 0.9
+  colsample_bytree: 0.9
+
+models:
+  graphsage:
+    hidden_channels: 128
+    layers: 2
+    dropout: 0.25
+  gat:
+    hidden_channels: 64
+    heads: 4
+    layers: 2
+    dropout: 0.25
+
+evaluation:
+  primary_metric: pr_auc
+  metrics:
+    - pr_auc
+    - roc_auc
+    - precision
+    - recall
+    - f1
