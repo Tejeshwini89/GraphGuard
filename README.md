@@ -8,9 +8,7 @@ GraphGuard is a graph-based financial-forensics system for detecting illicit Bit
 
 ## Primary Dataset
 
-GraphGuard uses the Elliptic Bitcoin transaction dataset. The PyTorch Geometric representation contains 203,769 transaction nodes, 234,355 directed payment-flow edges, 165 node features, and two labeled classes. Approximately 2% of nodes are labeled illicit, 21% licit, and the remaining transactions are unknown. The dataset is temporal, with 49 time steps. Unknown labels are not treated as negative fraud examples.
-
-Source: Elliptic's public dataset description and PyTorch Geometric's `EllipticBitcoinDataset` / `EllipticBitcoinTemporalDataset` documentation.
+GraphGuard uses the Elliptic Bitcoin transaction dataset. The source contains 203,769 transaction nodes, 234,355 directed payment-flow edges, 166 columns in the raw feature file, and 165 model features after excluding `txId` and `time_step`. The raw labels are `1` = illicit, `2` = licit, and `unknown` = unlabeled. GraphGuard normalizes these to `1`, `0`, and `-1` respectively. The dataset covers 49 time steps.
 
 ## Architecture
 
@@ -52,22 +50,38 @@ Source: Elliptic's public dataset description and PyTorch Geometric's `EllipticB
 
 The dataset is a natural graph-learning benchmark because transactions are connected through directed Bitcoin payment flows, and labels are attached to transaction nodes. Its temporal organization lets GraphGuard test forward-looking generalization rather than relying on a random split.
 
+## Phase 0 — Completed Forensics Gate
+
+The local dataset audit confirmed:
+
+- 203,769 transaction nodes
+- 234,355 directed edges
+- 165 model features
+- 42,019 licit transactions
+- 4,545 illicit transactions
+- 157,205 unknown transactions
+- 49 time steps
+- 2.23% illicit among labeled transactions
+
+A critical implementation detail was discovered and fixed: PyTorch Geometric's processed label encoding does not match the raw Elliptic label semantics. GraphGuard therefore normalizes labels directly from the raw class file rather than trusting the processed `graph.y` encoding. This prevents the 157,205 unknown transactions from being accidentally treated as labeled examples.
+
+The forensic report also records class counts per time step so that the chronological split is frozen only after checking that each evaluation window contains enough labeled examples of both classes.
+
 ## Planned Experimental Protocol
 
-1. Download/load the Elliptic dataset through PyTorch Geometric.
-2. Inspect dimensions, labels, missing values, and time-step distribution.
+1. Normalize and validate raw labels and temporal metadata.
+2. Inspect class counts by time step and freeze the chronological split.
 3. Audit features and identifiers for target leakage.
-4. Exclude unknown labels from supervised training/evaluation.
-5. Define a chronological train/validation/test split after inspecting the actual time distribution.
-6. Train an XGBoost baseline on tabular transaction features.
-7. Report PR-AUC, ROC-AUC, precision, recall, F1, confusion matrix, and threshold behavior.
-8. Train GraphSAGE on the transaction graph.
-9. Train GAT on the same leakage-safe protocol.
-10. Compare all models and perform error analysis.
-11. Materialize useful graph relationships in Neo4j for investigation.
-12. Expose prediction/investigation functions through FastAPI.
-13. Package the system with Docker.
-14. Add tests, CI, reproducible evaluation and documentation.
+4. Exclude unknown labels from supervised loss/evaluation while retaining their graph nodes where appropriate for transductive message passing.
+5. Train an XGBoost baseline on tabular transaction features.
+6. Report PR-AUC, ROC-AUC, precision, recall, F1, confusion matrix, and threshold behavior.
+7. Train GraphSAGE on the transaction graph.
+8. Train GAT on the same leakage-safe protocol.
+9. Compare all models and perform error analysis.
+10. Materialize useful graph relationships in Neo4j for investigation.
+11. Expose prediction/investigation functions through FastAPI.
+12. Package the system with Docker.
+13. Add tests, CI, reproducible evaluation and documentation.
 
 ## Important Modeling Rules
 
@@ -76,10 +90,11 @@ The dataset is a natural graph-learning benchmark because transactions are conne
 - Unknown labels are not silently converted into legitimate transactions.
 - GraphGuard will not claim that a GNN is better until the measured evaluation supports that claim.
 - Neo4j is an investigation layer, not a substitute for the GNN training graph.
+- The downloaded dataset is kept out of GitHub; only code, configuration, tests, reports, and documentation are versioned.
 
 ## Current Project State
 
-**Phase 0 — Foundation initialized.** The repository contains the project specification, configuration, dependency plan, and dataset-forensics entry point. No model result is claimed yet.
+**Phase 0 — Forensics implemented and dataset semantics corrected.** The repository now contains a normalized Elliptic loader, deterministic forensic reporting, per-timestep label auditing, temporal split utilities, tests, CI, and pinned dependencies. No model result is claimed yet.
 
 ## License
 
