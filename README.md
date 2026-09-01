@@ -1,100 +1,151 @@
 # GraphGuard
 
-GraphGuard is a graph-based financial-forensics system for detecting illicit Bitcoin transactions. The project is designed as a rigorous ML engineering study: establish a strong XGBoost tabular baseline, then test whether graph-aware learning with GraphSAGE and GAT adds predictive value under leakage-safe temporal evaluation.
+GraphGuard is a graph-based financial-forensics system for detecting illicit Bitcoin transactions. The project is being developed as a rigorous ML engineering study: establish a strong tabular baseline, test graph-aware learning under chronological evaluation, investigate why graph models generalize differently, and only then select the architecture for the production-style investigation layer.
 
 ## Research Question
 
 > Does graph-aware learning improve illicit transaction detection compared with a strong tabular XGBoost baseline?
 
+The project deliberately allows the answer to be **no**. A graph dataset does not automatically imply that a GNN will be the best predictive model.
+
 ## Primary Dataset
 
-GraphGuard uses the Elliptic Bitcoin transaction dataset. The source contains 203,769 transaction nodes, 234,355 directed payment-flow edges, 166 columns in the raw feature file, and 165 model features after excluding `txId` and `time_step`. The raw labels are `1` = illicit, `2` = licit, and `unknown` = unlabeled. GraphGuard normalizes these to `1`, `0`, and `-1` respectively. The dataset covers 49 time steps.
+GraphGuard uses the Elliptic Bitcoin transaction dataset:
+
+- 203,769 transaction nodes
+- 234,355 directed payment-flow edges
+- 166 raw columns
+- 165 model features after excluding `txId` and `time_step`
+- 49 time steps
+- Raw labels: `1` = illicit, `2` = licit, `unknown` = unlabeled
+- Normalized labels: `1` = illicit, `0` = licit, `-1` = unknown
+
+A critical loader issue was identified during forensic validation: the processed PyTorch Geometric label encoding must not be assumed to match the raw Elliptic class semantics. GraphGuard therefore normalizes labels from the raw class information and explicitly validates the resulting counts.
+
+## Experimental Protocol
+
+The main evaluation is chronological:
+
+- **Train:** time steps 1–29
+- **Validation:** time steps 30–34
+- **Test:** time steps 35–49
+
+Unknown labels are excluded from supervised loss and evaluation. For the current GNN experiments, future-period graph structure and features may participate in message passing, but future labels are never used for optimization, checkpoint selection, or threshold selection. This is documented as a **transductive temporal** protocol.
+
+Thresholds are selected on validation data only. The test window is reserved for final reporting.
 
 ## Architecture
 
 ```text
-                 Elliptic Transactions
-                         |
-                 Data Validation
-                         |
-                Temporal Split / Leakage Audit
-                         |
-            +------------+-------------+
-            |                          |
-      Tabular Features            Graph Structure
-            |                          |
-         XGBoost                PyTorch Geometric
-            |                    |             |
-            |               GraphSAGE          GAT
-            |                    |             |
-            +------------+-------+-------------+
-                         |
+                    Elliptic Transactions
+                            |
+                    Data Validation
+                            |
+                 Temporal Split / Audit
+                            |
+             +--------------+--------------+
+             |                             |
+       Tabular Features              Graph Structure
+             |                             |
+          XGBoost                  PyTorch Geometric
+             |                    /                  \
+             |              GraphSAGE                GAT*
+             |                    |                    |
+             +------------ Hybrid --------------------+
+                          |
                     Model Comparison
-                         |
-                  Fraud Probability
-                         |
-                  Threshold Analysis
-                         |
-             +-----------+-----------+
-             |                       |
-          Evaluation            Investigation
-                                      |
-                                    Neo4j
-                                      |
-                                  FastAPI
-                                      |
-                                   Docker
+                          |
+                   Fraud Probability
+                          |
+                 Threshold / Errors
+                          |
+                Investigation Layer
+                          |
+             Neo4j + FastAPI + Docker*
+
+* planned / controlled next-stage work
 ```
 
-## Why This Dataset?
+## Current Benchmark
 
-The dataset is a natural graph-learning benchmark because transactions are connected through directed Bitcoin payment flows, and labels are attached to transaction nodes. Its temporal organization lets GraphGuard test forward-looking generalization rather than relying on a random split.
+The first complete model comparison produced the following forward-test results:
 
-## Phase 0 — Completed Forensics Gate
+| Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test Precision | Test Recall | Test F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| XGBoost, all 165 features | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
+| GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
+| Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
 
-The local dataset audit confirmed:
+### Interpretation
 
-- 203,769 transaction nodes
-- 234,355 directed edges
-- 165 model features
-- 42,019 licit transactions
-- 4,545 illicit transactions
-- 157,205 unknown transactions
-- 49 time steps
-- 2.23% illicit among labeled transactions
+The current evidence does **not** support replacing XGBoost with the tested GraphSAGE models. The hybrid improves GraphSAGE slightly, but both GNN variants experience a large temporal generalization gap relative to the tabular baseline.
 
-A critical implementation detail was discovered and fixed: PyTorch Geometric's processed label encoding does not match the raw Elliptic label semantics. GraphGuard therefore normalizes labels directly from the raw class file rather than trusting the processed `graph.y` encoding. This prevents the 157,205 unknown transactions from being accidentally treated as labeled examples.
+This is treated as a research result rather than a project failure. The next experiments investigate whether engineered neighborhood features already capture much of the useful graph information and whether learned aggregation is sensitive to temporal graph shift.
 
-The forensic report also records class counts per time step so that the chronological split is frozen only after checking that each evaluation window contains enough labeled examples of both classes.
+## Graph Forensics
 
-## Planned Experimental Protocol
+The transaction graph is sparse:
 
-1. Normalize and validate raw labels and temporal metadata.
-2. Inspect class counts by time step and freeze the chronological split.
-3. Audit features and identifiers for target leakage.
-4. Exclude unknown labels from supervised loss/evaluation while retaining their graph nodes where appropriate for transductive message passing.
-5. Train an XGBoost baseline on tabular transaction features.
-6. Report PR-AUC, ROC-AUC, precision, recall, F1, confusion matrix, and threshold behavior.
-7. Train GraphSAGE on the transaction graph.
-8. Train GAT on the same leakage-safe protocol.
-9. Compare all models and perform error analysis.
-10. Materialize useful graph relationships in Neo4j for investigation.
-11. Expose prediction/investigation functions through FastAPI.
-12. Package the system with Docker.
-13. Add tests, CI, reproducible evaluation and documentation.
+- Mean total degree: **2.30**
+- Maximum total degree: **473**
+- **100%** of observed edges connect transactions within the same time step
+- **36,624** directed edges have both endpoints labeled
 
-## Important Modeling Rules
+Among labeled endpoints, **95.37%** of observed edges connect nodes with the same class globally. However, illicit-neighbor purity is much less stable:
 
-- Accuracy is not the primary fraud metric because the labeled classes are highly imbalanced.
-- Randomly mixing future transactions into training is not acceptable for the main experiment.
-- Unknown labels are not silently converted into legitimate transactions.
-- GraphGuard will not claim that a GNN is better until the measured evaluation supports that claim.
+- Train: **52.92%**
+- Validation: **71.43%**
+- Test: **37.15%**
+
+That instability is important: the graph contains class structure, but the local illicit-neighborhood pattern does not remain stable across the forward test period.
+
+## Feature Ablation
+
+XGBoost feature-group experiments show that local transaction features carry most of the predictive signal:
+
+| Feature set | Features | Validation PR-AUC | Test PR-AUC |
+|---|---:|---:|---:|
+| Local transaction | 93 | 0.9889 | 0.7710 |
+| One-hop aggregate | 72 | 0.8178 | 0.6201 |
+| All features | 165 | 0.9826 | **0.7909** |
+
+The one-hop aggregate features are independently useful, while combining them with local features produces the strongest completed test result. This suggests that engineered neighborhood information is already predictive and may overlap with what simple message-passing layers learn.
+
+The weak GNN result therefore **does not prove that graph information is useless**. It shows that the current learned aggregation approach is not transferring well over time on this dataset.
+
+## Completed Work
+
+- Dataset semantics and label-encoding forensic audit
+- Deterministic dataset report and per-timestep label auditing
+- Chronological train/validation/test split utilities
+- Leakage-aware XGBoost baseline
+- GraphSAGE with train-only feature scaling, class weighting, early stopping, and validation-only threshold selection
+- Feature + GraphSAGE hybrid model
+- Graph diagnostics and graph-signal analysis
+- Local-vs-one-hop-vs-full feature ablation
+- Post-hoc feature-importance tooling
+- Unit tests and pinned dependencies
+- Investigation log documenting model evidence and hypotheses
+
+## Next Work
+
+1. Run post-hoc feature importance on the untouched test set for interpretation only.
+2. Perform temporal error analysis to identify periods and transaction patterns where performance degrades.
+3. Directly test redundancy between engineered one-hop features and learned neighborhood aggregation.
+4. Introduce GAT only as a controlled hypothesis test: attention may help down-weight misleading neighbors that hurt GraphSAGE under temporal shift.
+5. Select the final modeling direction from evidence rather than from architecture preference.
+6. Build the Neo4j investigation layer around the selected model and graph relationships.
+7. Add FastAPI inference/investigation endpoints, Docker packaging, explainability, CI, and reproducible evaluation artifacts.
+
+## Modeling Rules
+
+- PR-AUC is the primary fraud metric because the labeled classes are imbalanced.
+- Random temporal mixing is not acceptable for the main experiment.
+- Unknown labels are never silently converted into legitimate transactions.
+- Test labels are never used for model selection or threshold tuning.
+- A GNN is not considered superior unless measured forward-test performance supports that conclusion.
 - Neo4j is an investigation layer, not a substitute for the GNN training graph.
-- The downloaded dataset is kept out of GitHub; only code, configuration, tests, reports, and documentation are versioned.
-
-## Current Project State
-
-**Phase 0 — Forensics implemented and dataset semantics corrected.** The repository now contains a normalized Elliptic loader, deterministic forensic reporting, per-timestep label auditing, temporal split utilities, tests, CI, and pinned dependencies. No model result is claimed yet.
+- The downloaded dataset remains outside GitHub; code, configuration, tests, reports, and documentation are versioned.
 
 ## License
 
