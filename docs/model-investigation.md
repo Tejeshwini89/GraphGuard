@@ -19,6 +19,9 @@ Unknown labels are excluded from supervised loss and evaluation. Current GNN exp
 | XGBoost, all 165 features | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
 | GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
 | Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
+| GAT | pending local run | pending | pending | pending | pending | pending |
+
+GAT is implemented as a controlled hypothesis test with the same temporal protocol, feature scaling, class weighting, early stopping, and validation-only threshold selection as GraphSAGE. No GAT performance is claimed until the real dataset run produces the metrics.
 
 ### Interpretation
 
@@ -76,11 +79,15 @@ A post-hoc feature-importance script is implemented for the full XGBoost model. 
 
 The intended next execution will rank features by permutation-based change in predictive behavior on the untouched test set.
 
+## Temporal error analysis
+
+The temporal error-analysis script is implemented and covered by unit tests. It evaluates the frozen XGBoost model separately for each test timestep, while selecting the classification threshold on validation data only. The resulting report is intended to identify periods where the forward test behavior changes sharply. The real dataset execution remains a local artifact because the downloaded dataset and model checkpoint are intentionally not committed to GitHub.
+
 ## Next experiments
 
-### 1. Temporal error analysis
+### 1. Run the temporal diagnostics
 
-Break the forward test period into individual time steps and inspect where XGBoost, GraphSAGE, and the hybrid degrade. The goal is to distinguish general temporal drift from specific periods where graph structure becomes less informative.
+Execute the feature-importance and temporal error-analysis scripts locally. Use their reports for interpretation only; do not tune the model against test-period findings.
 
 ### 2. Graph-feature redundancy
 
@@ -88,7 +95,7 @@ Compare models using local features, aggregate features, graph-only information,
 
 ### 3. GAT hypothesis test
 
-Only after the above analysis, evaluate GAT under the same split and training protocol. The specific hypothesis is:
+Run the implemented GAT under the same split and training protocol. The hypothesis is:
 
 > **Attention-based aggregation may improve robustness by down-weighting misleading neighbors when illicit-neighbor purity shifts across time.**
 
