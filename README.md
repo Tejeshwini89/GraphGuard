@@ -48,22 +48,22 @@ Thresholds are selected on validation data only. The test window is reserved for
        Tabular Features              Graph Structure
              |                             |
           XGBoost                  PyTorch Geometric
-             |                    /                  \
-             |              GraphSAGE                GAT*
-             |                    |                    |
-             +------------ Hybrid --------------------+
-                          |
-                    Model Comparison
-                          |
-                   Fraud Probability
-                          |
-                 Threshold / Errors
-                          |
-                Investigation Layer
-                          |
-             Neo4j + FastAPI + Docker*
+             |                    /        |         \
+             |              GraphSAGE    Hybrid      GAT*
+             |                    |        |          |
+             +--------------------+--------+----------+
+                                  |
+                           Model Comparison
+                                  |
+                           Fraud Probability
+                                  |
+                         Threshold / Errors
+                                  |
+                         Investigation Layer
+                                  |
+                    Neo4j + FastAPI + Docker*
 
-* planned / controlled next-stage work
+* GAT implementation is complete; benchmark execution is the next local experiment.
 ```
 
 ## Current Benchmark
@@ -75,6 +75,7 @@ The first complete model comparison produced the following forward-test results:
 | XGBoost, all 165 features | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
 | GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
 | Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
+| GAT | pending | pending | pending | pending | pending | pending |
 
 ### Interpretation
 
@@ -124,15 +125,17 @@ The weak GNN result therefore **does not prove that graph information is useless
 - Graph diagnostics and graph-signal analysis
 - Local-vs-one-hop-vs-full feature ablation
 - Post-hoc feature-importance tooling
+- Temporal error-analysis tooling with validation-only threshold selection
+- Controlled GAT implementation using the same temporal training protocol
 - Unit tests and pinned dependencies
 - Investigation log documenting model evidence and hypotheses
 
 ## Next Work
 
 1. Run post-hoc feature importance on the untouched test set for interpretation only.
-2. Perform temporal error analysis to identify periods and transaction patterns where performance degrades.
-3. Directly test redundancy between engineered one-hop features and learned neighborhood aggregation.
-4. Introduce GAT only as a controlled hypothesis test: attention may help down-weight misleading neighbors that hurt GraphSAGE under temporal shift.
+2. Run the GAT benchmark under the same split and protocol.
+3. Run temporal error analysis to identify periods and transaction patterns where performance degrades.
+4. Directly test redundancy between engineered one-hop features and learned neighborhood aggregation.
 5. Select the final modeling direction from evidence rather than from architecture preference.
 6. Build the Neo4j investigation layer around the selected model and graph relationships.
 7. Add FastAPI inference/investigation endpoints, Docker packaging, explainability, CI, and reproducible evaluation artifacts.
