@@ -10,11 +10,18 @@ from pydantic import BaseModel, Field
 from xgboost import XGBClassifier
 
 from graphguard.explainability import explain_xgboost
+from graphguard.feature_store import TransactionFeatureStore
 from graphguard.neo4j_store import Neo4jStore
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(os.getenv("GRAPHGUARD_MODEL", ROOT / "artifacts" / "baseline" / "xgboost.json"))
+FEATURE_STORE_PATH = Path(
+    os.getenv(
+        "GRAPHGUARD_FEATURE_STORE",
+        ROOT / "artifacts" / "features" / "transaction_features.npz",
+    )
+)
 THRESHOLD = float(os.getenv("GRAPHGUARD_THRESHOLD", "0.36"))
 EXPECTED_FEATURES = 165
 
@@ -26,6 +33,7 @@ app = FastAPI(
 
 _model: XGBClassifier | None = None
 _store: Neo4jStore | None = None
+_feature_store: TransactionFeatureStore | None = None
 
 
 class PredictionRequest(BaseModel):
@@ -61,6 +69,13 @@ def get_store() -> Neo4jStore:
     return _store
 
 
+def get_feature_store() -> TransactionFeatureStore:
+    global _feature_store
+    if _feature_store is None:
+        _feature_store = TransactionFeatureStore(FEATURE_STORE_PATH)
+    return _feature_store
+
+
 def _features(values: list[float]) -> np.ndarray:
     return np.asarray(values, dtype=np.float32).reshape(1, EXPECTED_FEATURES)
 
@@ -71,6 +86,7 @@ def health() -> dict[str, str | bool]:
         "status": "ok",
         "model_available": MODEL_PATH.exists(),
         "neo4j_configured": bool(os.getenv("NEO4J_PASSWORD")),
+        "feature_store_available": FEATURE_STORE_PATH.exists(),
     }
 
 
@@ -131,3 +147,27 @@ def suspicious_neighbors(tx_id: int, limit: int = 20) -> dict[str, object]:
     except (ValueError, OSError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"tx_id": tx_id, "neighbors": neighbors}
+
+
+@app.get("/transactions/{tx_id}/explain")
+def explain_transaction(tx_id: int, top_k: int = 10) -> dict[str, object]:
+    if not 1 <= top_k <= 50:
+        raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
+
+    try:
+        model = get_model()
+        features = get_feature_store().get_features(tx_id)
+        transaction_data = get_store().get_transaction(tx_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if transaction_data is None or features is None:
+        raise HTTPException(status_code=404, detail="Transaction features not found")
+
+    explanation = explain_xgboost(model, features.reshape(1, EXPECTED_FEATURES), top_k=top_k)
+    return {
+        "transaction": transaction_data,
+        "explanation": explanation,
+    }
