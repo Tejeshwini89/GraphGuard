@@ -16,6 +16,7 @@ def test_summarize_graph_counts_known_and_unknown_labels():
         ),
         edge_index=torch.tensor([[0, 1], [1, 2]], dtype=torch.long),
         y=torch.tensor([0, 1, -1, 1], dtype=torch.long),
+        time_step=torch.tensor([1, 1, 2, 2], dtype=torch.long),
     )
 
     summary = summarize_graph(data)
@@ -28,8 +29,8 @@ def test_summarize_graph_counts_known_and_unknown_labels():
     assert summary.licit_labels == 1
     assert summary.illicit_labels == 2
     assert summary.illicit_rate_among_known == 2 / 3
-    assert summary.min_time_step is None
-    assert summary.max_time_step is None
+    assert summary.min_time_step == 1
+    assert summary.max_time_step == 2
 
 
 def test_summarize_graph_records_time_step_counts_when_available():
