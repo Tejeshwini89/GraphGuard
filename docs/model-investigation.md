@@ -17,17 +17,17 @@ Unknown labels are excluded from supervised loss and evaluation. Current GNN exp
 | Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test Precision | Test Recall | Test F1 |
 |---|---:|---:|---:|---:|---:|---:|
 | XGBoost, all 165 features | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
-| GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
 | Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
-| GAT | pending local run | pending | pending | pending | pending | pending |
+| GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
+| GAT | 0.8466 | 0.3624 | 0.8584 | 0.5095 | 0.3721 | 0.4301 |
 
-GAT is implemented as a controlled hypothesis test with the same temporal protocol, feature scaling, class weighting, early stopping, and validation-only threshold selection as GraphSAGE. No GAT performance is claimed until the real dataset run produces the metrics.
+GAT was evaluated as a controlled hypothesis test with the same temporal protocol, feature scaling, class weighting, early stopping, and validation-only threshold selection.
 
 ### Interpretation
 
-XGBoost is currently the strongest completed model on the forward test window. GraphSAGE underperforms substantially, while the feature + GraphSAGE hybrid improves GraphSAGE only slightly and remains far behind the tabular baseline.
+XGBoost is the strongest model on the forward test window by a large margin. The feature + GraphSAGE hybrid improves GraphSAGE only slightly, while GAT achieves the strongest GNN validation PR-AUC but the weakest forward-test PR-AUC of the four models.
 
-The important conclusion is not that graph learning is useless. The evidence says that **this simple learned neighborhood aggregation does not transfer robustly across the observed temporal shift**.
+The important conclusion is not that graph learning is useless. The evidence says that **the tested learned neighborhood aggregation approaches do not transfer robustly across the observed temporal shift**.
 
 ## Feature ablation
 
@@ -45,7 +45,7 @@ This creates a concrete hypothesis for the graph investigation:
 
 > **Engineered one-hop aggregate features may already encode much of the neighborhood information that a simple GraphSAGE layer would otherwise learn.**
 
-This is a redundancy hypothesis, not a conclusion. It needs a controlled experiment before being treated as established fact.
+This is a redundancy hypothesis, not a conclusion. The completed ablation supports investigating it, but does not establish complete redundancy.
 
 ## Graph forensics
 
@@ -59,48 +59,83 @@ Among labeled endpoints, 95.37% of observed edges connect nodes with the same cl
 | Validation | 71.43% |
 | Test | 37.15% |
 
-The global same-label rate therefore cannot be used by itself to claim that neighborhood aggregation will generalize. The test-period drop in illicit-neighbor purity is particularly relevant because GraphSAGE relies on local aggregation.
+The global same-label rate therefore cannot be used by itself to claim that neighborhood aggregation will generalize. The test-period drop in illicit-neighbor purity is particularly relevant because GraphSAGE and GAT rely on local aggregation.
 
 ## Why the GNN result is informative
 
-Three observations now fit together:
+Four observations now fit together:
 
 1. The graph has measurable class structure.
 2. Engineered one-hop aggregate features are predictive.
-3. Learned GraphSAGE aggregation performs poorly on the forward test period.
+3. Local transaction features dominate the predictive signal.
+4. GraphSAGE, hybrid GraphSAGE, and GAT all show large forward-test degradation.
 
-A reasonable interpretation is that the graph contains useful information, but the **form and stability of that information matter**. The model may also be learning information that is redundant with the anonymized one-hop aggregate features already supplied by the dataset.
+A reasonable interpretation is that the graph contains useful information, but the **form and stability of that information matter**. The models may also be learning information that overlaps with the anonymized one-hop aggregate features already supplied by the dataset.
 
-The current results therefore justify investigation rather than immediate architecture expansion.
+The correct engineering response is therefore not to add increasingly complex GNNs without evidence. The selected detector is XGBoost, while the graph is retained for relationship-aware investigation.
 
 ## Feature importance
 
-A post-hoc feature-importance script is implemented for the full XGBoost model. It is deliberately diagnostic: test labels may be used to measure importance after the model and threshold are frozen, but they must not influence model selection or tuning.
+A post-hoc feature-importance report was executed for the frozen full XGBoost model using permutation importance on the untouched test set. The report ranks features by decrease in average precision when a feature is permuted.
 
-The intended next execution will rank features by permutation-based change in predictive behavior on the untouched test set.
+Top features by test AP decrease were:
+
+| Rank | Feature index | Mean AP decrease |
+|---:|---:|---:|
+| 1 | 52 | 0.02091 |
+| 2 | 89 | 0.01461 |
+| 3 | 58 | 0.01061 |
+| 4 | 2 | 0.00763 |
+| 5 | 17 | 0.00621 |
+| 6 | 124 | 0.00466 |
+| 7 | 4 | 0.00310 |
+| 8 | 162 | 0.00292 |
+| 9 | 126 | 0.00279 |
+| 10 | 160 | 0.00278 |
+
+The top 20 contain 15 local-feature indices and 5 one-hop aggregate-feature indices. Because the Elliptic model features are anonymized, GraphGuard does not invent semantic names for these indices.
+
+This report is diagnostic only; the test labels did not influence model selection or threshold tuning.
 
 ## Temporal error analysis
 
-The temporal error-analysis script is implemented and covered by unit tests. It evaluates the frozen XGBoost model separately for each test timestep, while selecting the classification threshold on validation data only. The resulting report is intended to identify periods where the forward test behavior changes sharply. The real dataset execution remains a local artifact because the downloaded dataset and model checkpoint are intentionally not committed to GitHub.
+Post-hoc timestep analysis shows that the aggregate XGBoost test PR-AUC of 0.7909 hides substantial temporal drift.
 
-## Next experiments
+The model is strong in earlier test periods, including:
 
-### 1. Run the temporal diagnostics
+- t35: PR-AUC 0.9900
+- t38: PR-AUC 0.9520
+- t41: PR-AUC 0.9666
+- t42: PR-AUC 0.8854
 
-Execute the feature-importance and temporal error-analysis scripts locally. Use their reports for interpretation only; do not tune the model against test-period findings.
+Performance then collapses from t43 onward:
 
-### 2. Graph-feature redundancy
+- t43: PR-AUC 0.0332
+- t44: PR-AUC 0.0279
+- t45: PR-AUC 0.0068
+- t47: PR-AUC 0.0401
+- t48: PR-AUC 0.1874
+- t49: PR-AUC 0.2059
 
-Compare models using local features, aggregate features, graph-only information, and controlled combinations. The objective is to determine whether learned message passing contributes signal beyond the engineered neighborhood features.
+This degradation is not explained by prevalence alone: t49 has an illicit rate of 11.76% but PR-AUC only 0.2059, while t35 has a similar 13.57% illicit rate and PR-AUC 0.9900. The evidence is consistent with a changing feature-to-label relationship or other temporal distribution shift.
 
-### 3. GAT hypothesis test
+These findings are post-hoc diagnostics and are not used to retune the frozen model.
 
-Run the implemented GAT under the same split and training protocol. The hypothesis is:
+## Final architecture decision
 
-> **Attention-based aggregation may improve robustness by down-weighting misleading neighbors when illicit-neighbor purity shifts across time.**
+The forward-test benchmark selects **XGBoost** as the primary risk engine. Graph technology remains central to the product, but in a role where it provides direct operational value:
 
-A GAT result will be considered meaningful only if it improves the same forward test metric under the same leakage constraints.
+- **XGBoost:** illicit transaction risk scoring
+- **Neo4j:** transaction relationships and suspicious-neighbor investigation
+- **FastAPI:** inference, explanation, and investigation access
+- **XGBoost contributions:** local model explanation
 
-## Decision rule
+This separation is intentional. GraphGuard demonstrates that an engineering team should choose the predictive architecture from measured forward performance while still exploiting graph structure for investigation and context.
 
-The final architecture will be selected from measured evidence. If XGBoost remains strongest, GraphGuard will use the GNN experiments as a documented negative/diagnostic result and focus the graph stack on investigation and explainability rather than pretending the GNN is superior.
+## Next engineering work
+
+1. Populate Neo4j from the normalized Elliptic graph and frozen XGBoost risk scores.
+2. Validate transaction and suspicious-neighbor queries against the local database.
+3. Exercise the FastAPI `/predict`, `/explain`, `/transactions/{tx_id}`, and `/transactions/{tx_id}/neighbors` workflow.
+4. Add end-to-end Docker validation and reproducibility checks.
+5. Add a polished investigator-facing demo workflow and final limitations/threat-model documentation.
