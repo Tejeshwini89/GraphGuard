@@ -11,6 +11,7 @@ COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
 
 COPY src ./src
+COPY web ./web
 COPY config.yaml ./config.yaml
 
 ENV PYTHONPATH=/app/src
