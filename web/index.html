@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GraphGuard Investigator</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2e; --muted:#8e9bb8; --text:#eef3ff; --line:#25304a; --accent:#6ea8fe; --danger:#ff6b6b; --good:#59d39b; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif; background:radial-gradient(circle at top right,#18264b 0,#0b1020 42%); color:var(--text); }
+    .shell { max-width:1180px; margin:auto; padding:32px 20px 48px; }
+    header { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:28px; }
+    .eyebrow { color:var(--accent); text-transform:uppercase; letter-spacing:.14em; font-size:12px; font-weight:700; }
+    h1 { margin:6px 0 5px; font-size:34px; }
+    .subtitle { color:var(--muted); margin:0; }
+    .badge { border:1px solid var(--line); border-radius:999px; padding:8px 12px; color:var(--muted); font-size:13px; }
+    .search { display:flex; gap:10px; margin-bottom:22px; }
+    input { flex:1; min-width:0; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:10px; padding:14px 16px; font-size:15px; outline:none; }
+    input:focus { border-color:var(--accent); }
+    button { border:0; border-radius:10px; padding:0 22px; font-weight:700; cursor:pointer; background:var(--accent); color:#08101f; }
+    button:disabled { opacity:.6; cursor:wait; }
+    .error { display:none; background:#321923; border:1px solid #71313d; color:#ffb6bc; padding:12px 14px; border-radius:10px; margin-bottom:18px; }
+    .grid { display:grid; grid-template-columns:1.05fr 1fr; gap:18px; }
+    .panel { background:rgba(18,26,46,.9); border:1px solid var(--line); border-radius:16px; padding:20px; box-shadow:0 14px 40px rgba(0,0,0,.18); }
+    .wide { grid-column:1/-1; }
+    .panel h2 { margin:0 0 18px; font-size:17px; }
+    .risk { display:flex; align-items:center; gap:24px; }
+    .gauge { width:132px; height:132px; border-radius:50%; display:grid; place-items:center; background:conic-gradient(var(--danger) 0deg, var(--danger) calc(var(--score)*360deg), #26314c calc(var(--score)*360deg)); position:relative; flex:none; }
+    .gauge::after { content:""; width:102px; height:102px; border-radius:50%; background:var(--panel); position:absolute; }
+    .gauge strong { position:relative; z-index:1; font-size:25px; }
+    .decision { color:var(--danger); font-size:18px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+    .meta { color:var(--muted); line-height:1.8; font-size:14px; }
+    .metric-row { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding:11px 0; }
+    .metric-row:last-child { border-bottom:0; }
+    .metric-row span:last-child { font-weight:700; }
+    .feature { display:grid; grid-template-columns:70px 1fr 110px; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+    .feature:last-child { border-bottom:0; }
+    .bar { height:7px; background:#26314c; border-radius:999px; overflow:hidden; }
+    .bar i { display:block; height:100%; background:var(--accent); border-radius:999px; }
+    .positive { color:#ff9b9b; } .negative { color:var(--good); }
+    .neighbors { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
+    .neighbor { border:1px solid var(--line); border-radius:10px; padding:12px; }
+    .neighbor strong { display:block; margin-bottom:5px; }
+    .muted { color:var(--muted); font-size:13px; }
+    .empty { color:var(--muted); padding:14px 0; }
+    footer { color:var(--muted); font-size:12px; margin-top:18px; text-align:center; }
+    @media (max-width:760px) { header { align-items:flex-start; flex-direction:column; } .grid { grid-template-columns:1fr; } .wide { grid-column:auto; } .search { flex-direction:column; } button { height:46px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div><div class="eyebrow">GraphGuard · Investigator Console</div><h1>Transaction Risk Investigation</h1><p class="subtitle">Model risk + explainability + graph context in one view.</p></div>
+      <div class="badge">XGBoost · Elliptic Bitcoin · Temporal split</div>
+    </header>
+    <form class="search" id="form"><input id="tx" inputmode="numeric" value="85087377" placeholder="Enter transaction ID" aria-label="Transaction ID"><button id="go">Investigate</button></form>
+    <div class="error" id="error"></div>
+    <section class="grid" id="results" hidden>
+      <article class="panel"><h2>Risk assessment</h2><div class="risk"><div class="gauge" id="gauge"><strong id="score">—</strong></div><div><div class="decision" id="decision">—</div><div class="meta" id="meta"></div></div></div></article>
+      <article class="panel"><h2>Investigation summary</h2><div id="summary"></div></article>
+      <article class="panel"><h2>Why the model flagged it</h2><div id="features" class="empty">No explanation loaded.</div></article>
+      <article class="panel"><h2>Graph context</h2><div class="meta" id="graph-meta"></div><div id="neighbors" class="neighbors" style="margin-top:12px"></div></article>
+    </section>
+    <footer>Decision threshold is selected on validation data only. Feature contributions are model explanations, not causal claims.</footer>
+  </main>
+<script>
+const $ = id => document.getElementById(id);
+function pct(v){ return (v*100).toFixed(2)+'%'; }
+async function investigate(id){
+  $('error').style.display='none'; $('results').hidden=true; $('go').disabled=true; $('go').textContent='Loading…';
+  try {
+    const r=await fetch('/cases/'+encodeURIComponent(id));
+    const data=await r.json(); if(!r.ok) throw new Error(data.detail||'Request failed');
+    const c=data.case, e=data.explanation, ns=data.graph_context.highest_risk_neighbors||[];
+    $('score').textContent=pct(c.risk_score); $('gauge').style.setProperty('--score',c.risk_score);
+    $('decision').textContent=c.decision.replaceAll('_',' ');
+    $('meta').innerHTML=`Transaction <b>${c.tx_id}</b><br>Time step <b>${c.time_step}</b><br>Threshold <b>${pct(c.threshold)}</b>`;
+    $('summary').innerHTML=`<div class="metric-row"><span>Risk score</span><span>${pct(c.risk_score)}</span></div><div class="metric-row"><span>Decision</span><span>${c.decision.replaceAll('_',' ')}</span></div><div class="metric-row"><span>Top contributors</span><span>${e.top_features.length}</span></div><div class="metric-row"><span>Graph neighbors</span><span>${data.graph_context.neighbor_count}</span></div>`;
+    const fs=e.top_features, max=Math.max(...fs.map(x=>Math.abs(x.contribution)),1e-9);
+    $('features').innerHTML=fs.map(f=>`<div class="feature"><b>F${f.feature_index}</b><div class="bar"><i style="width:${Math.min(100,Math.abs(f.contribution)/max*100)}%"></i></div><span class="${f.contribution>=0?'positive':'negative'}">${f.contribution>=0?'+':''}${f.contribution.toFixed(4)}</span></div>`).join('');
+    $('graph-meta').textContent=`${data.graph_context.neighbor_count} highest-risk connected transactions from Neo4j.`;
+    $('neighbors').innerHTML=ns.length?ns.map(n=>`<div class="neighbor"><strong>TX ${n.tx_id}</strong><span class="muted">risk ${n.risk_score!=null?pct(n.risk_score):'n/a'}</span></div>`).join(''):'<div class="empty">No suspicious neighbors returned.</div>';
+    $('results').hidden=false;
+  } catch(err){ $('error').textContent=err.message; $('error').style.display='block'; }
+  finally { $('go').disabled=false; $('go').textContent='Investigate'; }
+}
+$('form').addEventListener('submit',e=>{e.preventDefault(); const id=$('tx').value.trim(); if(id) investigate(id);});
+investigate($('tx').value);
+</script>
+</body>
+</html>
