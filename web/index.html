@@ -22,7 +22,6 @@
     .error { display:none; background:#321923; border:1px solid #71313d; color:#ffb6bc; padding:12px 14px; border-radius:10px; margin-bottom:18px; }
     .grid { display:grid; grid-template-columns:1.05fr 1fr; gap:18px; }
     .panel { background:rgba(18,26,46,.9); border:1px solid var(--line); border-radius:16px; padding:20px; box-shadow:0 14px 40px rgba(0,0,0,.18); }
-    .wide { grid-column:1/-1; }
     .panel h2 { margin:0 0 18px; font-size:17px; }
     .risk { display:flex; align-items:center; gap:24px; }
     .gauge { width:132px; height:132px; border-radius:50%; display:grid; place-items:center; background:conic-gradient(var(--danger) 0deg, var(--danger) calc(var(--score)*360deg), #26314c calc(var(--score)*360deg)); position:relative; flex:none; }
@@ -44,7 +43,7 @@
     .muted { color:var(--muted); font-size:13px; }
     .empty { color:var(--muted); padding:14px 0; }
     footer { color:var(--muted); font-size:12px; margin-top:18px; text-align:center; }
-    @media (max-width:760px) { header { align-items:flex-start; flex-direction:column; } .grid { grid-template-columns:1fr; } .wide { grid-column:auto; } .search { flex-direction:column; } button { height:46px; } }
+    @media (max-width:760px) { header { align-items:flex-start; flex-direction:column; } .grid { grid-template-columns:1fr; } .search { flex-direction:column; } button { height:46px; } }
   </style>
 </head>
 <body>
@@ -72,14 +71,14 @@ async function investigate(id){
     const r=await fetch('/cases/'+encodeURIComponent(id));
     const data=await r.json(); if(!r.ok) throw new Error(data.detail||'Request failed');
     const c=data.case, e=data.explanation, ns=data.graph_context.highest_risk_neighbors||[];
-    $('score').textContent=pct(c.risk_score); $('gauge').style.setProperty('--score',c.risk_score);
+    $('score').textContent=pct(c.risk_score); $('gauge').style.setProperty('--score',Math.min(1,Math.max(0,c.risk_score)));
     $('decision').textContent=c.decision.replaceAll('_',' ');
     $('meta').innerHTML=`Transaction <b>${c.tx_id}</b><br>Time step <b>${c.time_step}</b><br>Threshold <b>${pct(c.threshold)}</b>`;
-    $('summary').innerHTML=`<div class="metric-row"><span>Risk score</span><span>${pct(c.risk_score)}</span></div><div class="metric-row"><span>Decision</span><span>${c.decision.replaceAll('_',' ')}</span></div><div class="metric-row"><span>Top contributors</span><span>${e.top_features.length}</span></div><div class="metric-row"><span>Graph neighbors</span><span>${data.graph_context.neighbor_count}</span></div>`;
+    $('summary').innerHTML=`<div class="metric-row"><span>Risk score</span><span>${pct(c.risk_score)}</span></div><div class="metric-row"><span>Decision</span><span>${c.decision.replaceAll('_',' ')}</span></div><div class="metric-row"><span>Top contributors</span><span>${e.top_features.length}</span></div><div class="metric-row"><span>Graph connections</span><span>${data.graph_context.neighbor_count}</span></div>`;
     const fs=e.top_features, max=Math.max(...fs.map(x=>Math.abs(x.contribution)),1e-9);
     $('features').innerHTML=fs.map(f=>`<div class="feature"><b>F${f.feature_index}</b><div class="bar"><i style="width:${Math.min(100,Math.abs(f.contribution)/max*100)}%"></i></div><span class="${f.contribution>=0?'positive':'negative'}">${f.contribution>=0?'+':''}${f.contribution.toFixed(4)}</span></div>`).join('');
-    $('graph-meta').textContent=`${data.graph_context.neighbor_count} highest-risk connected transactions from Neo4j.`;
-    $('neighbors').innerHTML=ns.length?ns.map(n=>`<div class="neighbor"><strong>TX ${n.tx_id}</strong><span class="muted">risk ${n.risk_score!=null?pct(n.risk_score):'n/a'}</span></div>`).join(''):'<div class="empty">No suspicious neighbors returned.</div>';
+    $('graph-meta').textContent=`${data.graph_context.neighbor_count} connected transaction${data.graph_context.neighbor_count===1?'':'s'} returned from Neo4j.`;
+    $('neighbors').innerHTML=ns.length?ns.map(n=>`<div class="neighbor"><strong>TX ${n.tx_id}</strong><span class="muted">model risk ${n.risk_score!=null?pct(n.risk_score):'n/a'}</span></div>`).join(''):'<div class="empty">No connected transactions returned.</div>';
     $('results').hidden=false;
   } catch(err){ $('error').textContent=err.message; $('error').style.display='block'; }
   finally { $('go').disabled=false; $('go').textContent='Investigate'; }
