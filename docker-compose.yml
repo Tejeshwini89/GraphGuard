@@ -1,0 +1,27 @@
+services:
+  graphguard-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      GRAPHGUARD_MODEL: /app/artifacts/baseline/xgboost.json
+      GRAPHGUARD_THRESHOLD: "0.36"
+    volumes:
+      - ./artifacts/baseline:/app/artifacts/baseline:ro
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/change-me-in-local-env
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
