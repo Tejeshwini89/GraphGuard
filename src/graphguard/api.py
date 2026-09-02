@@ -6,6 +6,7 @@ from typing import Annotated
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from xgboost import XGBClassifier
 
@@ -16,6 +17,7 @@ from graphguard.neo4j_store import Neo4jStore
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(os.getenv("GRAPHGUARD_MODEL", ROOT / "artifacts" / "baseline" / "xgboost.json"))
 FEATURE_STORE_PATH = Path(os.getenv("GRAPHGUARD_FEATURE_STORE", ROOT / "artifacts" / "features" / "transaction_features.npz"))
+DASHBOARD_PATH = ROOT / "web" / "index.html"
 THRESHOLD = float(os.getenv("GRAPHGUARD_THRESHOLD", "0.36"))
 EXPECTED_FEATURES = 165
 
@@ -92,6 +94,13 @@ def model_info() -> dict[str, str | float | int]:
         "threshold": THRESHOLD,
         "protocol": "temporal_train_1_29_validation_30_34_test_35_49",
     }
+
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard() -> FileResponse:
+    if not DASHBOARD_PATH.exists():
+        raise HTTPException(status_code=503, detail="Dashboard asset not found")
+    return FileResponse(DASHBOARD_PATH, media_type="text/html")
 
 
 @app.post("/predict", response_model=PredictionResponse)
