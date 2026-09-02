@@ -49,6 +49,10 @@ models:
     heads: 4
     layers: 2
     dropout: 0.25
+    epochs: 100
+    learning_rate: 0.003
+    weight_decay: 0.0001
+    patience: 12
 
 evaluation:
   primary_metric: pr_auc
