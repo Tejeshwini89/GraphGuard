@@ -13,15 +13,9 @@ from graphguard.explainability import explain_xgboost
 from graphguard.feature_store import TransactionFeatureStore
 from graphguard.neo4j_store import Neo4jStore
 
-
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(os.getenv("GRAPHGUARD_MODEL", ROOT / "artifacts" / "baseline" / "xgboost.json"))
-FEATURE_STORE_PATH = Path(
-    os.getenv(
-        "GRAPHGUARD_FEATURE_STORE",
-        ROOT / "artifacts" / "features" / "transaction_features.npz",
-    )
-)
+FEATURE_STORE_PATH = Path(os.getenv("GRAPHGUARD_FEATURE_STORE", ROOT / "artifacts" / "features" / "transaction_features.npz"))
 THRESHOLD = float(os.getenv("GRAPHGUARD_THRESHOLD", "0.36"))
 EXPECTED_FEATURES = 165
 
@@ -106,14 +100,9 @@ def predict(request: PredictionRequest) -> PredictionResponse:
         model = get_model()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
     features = _features(request.features)
     probability = float(model.predict_proba(features)[0, 1])
-    return PredictionResponse(
-        risk_score=probability,
-        illicit=probability >= THRESHOLD,
-        threshold=THRESHOLD,
-    )
+    return PredictionResponse(risk_score=probability, illicit=probability >= THRESHOLD, threshold=THRESHOLD)
 
 
 @app.post("/explain")
@@ -153,7 +142,6 @@ def suspicious_neighbors(tx_id: int, limit: int = 20) -> dict[str, object]:
 def explain_transaction(tx_id: int, top_k: int = 10) -> dict[str, object]:
     if not 1 <= top_k <= 50:
         raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
-
     try:
         model = get_model()
         features = get_feature_store().get_features(tx_id)
@@ -162,12 +150,47 @@ def explain_transaction(tx_id: int, top_k: int = 10) -> dict[str, object]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, OSError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
     if transaction_data is None or features is None:
         raise HTTPException(status_code=404, detail="Transaction features not found")
+    explanation = explain_xgboost(model, features.reshape(1, EXPECTED_FEATURES), top_k=top_k)
+    return {"transaction": transaction_data, "explanation": explanation}
+
+
+@app.get("/cases/{tx_id}")
+def investigator_case(tx_id: int, top_k: int = 10, neighbor_limit: int = 10) -> dict[str, object]:
+    """Return one investigator-ready case: risk, explanation, and graph context."""
+    if not 1 <= top_k <= 50:
+        raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
+    if not 1 <= neighbor_limit <= 100:
+        raise HTTPException(status_code=400, detail="neighbor_limit must be between 1 and 100")
+
+    try:
+        model = get_model()
+        store = get_store()
+        transaction_data = store.get_transaction(tx_id)
+        features = get_feature_store().get_features(tx_id)
+        neighbors = store.get_suspicious_neighbors(tx_id, neighbor_limit)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if transaction_data is None or features is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
 
     explanation = explain_xgboost(model, features.reshape(1, EXPECTED_FEATURES), top_k=top_k)
+    risk_score = float(explanation["risk_score"])
     return {
-        "transaction": transaction_data,
+        "case": {
+            "tx_id": tx_id,
+            "time_step": transaction_data.get("time_step"),
+            "risk_score": risk_score,
+            "decision": "high_risk" if risk_score >= THRESHOLD else "below_threshold",
+            "threshold": THRESHOLD,
+        },
         "explanation": explanation,
+        "graph_context": {
+            "neighbor_count": len(neighbors),
+            "highest_risk_neighbors": neighbors,
+        },
     }
