@@ -2,7 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 
+from graphguard.ablation import ELLIPTIC_FEATURE_GROUPS, build_feature_groups
 from scripts.feature_ablation import _select_threshold
+
+
+def test_elliptic_feature_groups_cover_all_165_features() -> None:
+    groups = build_feature_groups(165)
+    assert [(group.name, group.start, group.end) for group in groups] == [
+        ("local_transaction_features", 0, 93),
+        ("one_hop_aggregate_features", 93, 165),
+    ]
+    assert sum(group.size for group in groups) == 165
+
+
+def test_elliptic_feature_group_constants_match_layout() -> None:
+    assert ELLIPTIC_FEATURE_GROUPS["local_transaction_features"] == (0, 93)
+    assert ELLIPTIC_FEATURE_GROUPS["one_hop_aggregate_features"] == (93, 165)
 
 
 def test_select_threshold_uses_validation_probabilities() -> None:
