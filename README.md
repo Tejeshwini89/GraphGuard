@@ -55,8 +55,7 @@ The production-style architecture therefore separates **prediction** from **inve
         Risk Engine                Research Track
              |                    /        |        \
              |              GraphSAGE    Hybrid      GAT
-             |                    \        |        /
-             |                     \       |       /
+             |                    \        |       /
              +----------------------+-------+------+
                             Model Evidence
                                   |
@@ -71,7 +70,7 @@ The production-style architecture therefore separates **prediction** from **inve
                     +-------------+-------------+
                                   |
                        Investigator Workflow
-                  risk → explanation → neighbors
+              case → risk → explanation → neighbors
 ```
 
 This is intentional: the GNN experiments remain valuable as a documented model investigation, while Neo4j provides graph-native context for analysts instead of being forced into the predictive role.
@@ -147,7 +146,7 @@ The one-hop aggregate features are independently useful, while combining them wi
 
 ## Explainability
 
-GraphGuard now exposes local XGBoost feature contributions through `POST /explain`.
+GraphGuard exposes local XGBoost feature contributions through `POST /explain`. For investigation, the feature store preserves the original 165-feature vector for every transaction, allowing an analyst to request an explanation by transaction ID without manually supplying features.
 
 The explanation uses XGBoost's additive prediction contributions in **margin/log-odds space**, not probability space. Each returned feature has a signed contribution:
 
@@ -169,26 +168,32 @@ Neo4j stores the transaction graph with:
 
 The API supports:
 
-- `GET /health` — service/model/Neo4j configuration health
+- `GET /health` — service/model/Neo4j/feature-store health
 - `GET /model` — selected model and evaluation protocol metadata
 - `POST /predict` — 165-feature illicit-risk prediction
-- `POST /explain` — local model explanation
+- `POST /explain` — local model explanation for supplied features
 - `GET /transactions/{tx_id}` — transaction risk lookup
 - `GET /transactions/{tx_id}/neighbors` — highest-risk connected neighbors
+- `GET /transactions/{tx_id}/explain` — transaction-ID-driven explanation using the feature store
+- `GET /cases/{tx_id}` — investigator-ready case combining risk, explanation, and graph context
 
 The intended analyst workflow is:
 
 ```text
-Transaction
-    ↓
-Risk score
-    ↓
-Why was it flagged?
-    ↓
-Which connected transactions are risky?
-    ↓
+Transaction ID
+     ↓
+Case view
+     ↓
+Risk score + decision
+     ↓
+Why was it flagged?  →  top feature contributions
+     ↓
+What is connected?    →  highest-risk neighbors
+     ↓
 Investigate the surrounding transaction cluster
 ```
+
+The case endpoint is intentionally a thin orchestration layer: XGBoost remains responsible for risk scoring, while Neo4j supplies relationship context and the feature store supplies the exact model input needed for local explanation.
 
 ## Completed Work
 
@@ -207,6 +212,8 @@ Investigate the surrounding transaction cluster
 - Neo4j persistence/query layer
 - FastAPI inference and investigation endpoints
 - Local XGBoost explainability endpoint
+- Persistent transaction feature store for ID-based explanations
+- Investigator case aggregation endpoint
 - Unit tests and pinned dependencies
 - Docker/Compose packaging
 - Investigation log documenting model evidence and hypotheses
@@ -226,6 +233,16 @@ python scripts\train_gat.py
 python scripts\model_comparison_report.py
 python scripts\feature_importance_report.py
 python scripts\temporal_error_analysis.py
+python scripts\export_feature_store.py
+python scripts\build_neo4j.py
+```
+
+For the operational demo:
+
+```powershell
+docker compose up -d --build
+python scripts\smoke_test_api.py
+Invoke-RestMethod "http://127.0.0.1:8000/cases/85087377?top_k=10&neighbor_limit=10" | ConvertTo-Json -Depth 8
 ```
 
 ## Modeling Rules
