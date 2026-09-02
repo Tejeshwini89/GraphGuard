@@ -1,6 +1,6 @@
 # GraphGuard
 
-GraphGuard is a graph-based financial-forensics system for detecting illicit Bitcoin transactions. The project is being developed as a rigorous ML engineering study: establish a strong tabular baseline, test graph-aware learning under chronological evaluation, investigate why graph models generalize differently, and only then select the architecture for the production-style investigation layer.
+GraphGuard is a graph-based financial-forensics system for detecting illicit Bitcoin transactions. It combines a rigorously evaluated XGBoost risk engine with a Neo4j transaction graph and FastAPI investigation layer. The project was deliberately developed as an evidence-driven ML study: establish a strong tabular baseline, test graph-aware learning under chronological evaluation, investigate generalization, and only then select the architecture for the operational layer.
 
 ## Research Question
 
@@ -30,11 +30,15 @@ The main evaluation is chronological:
 - **Validation:** time steps 30–34
 - **Test:** time steps 35–49
 
-Unknown labels are excluded from supervised loss and evaluation. For the current GNN experiments, future-period graph structure and features may participate in message passing, but future labels are never used for optimization, checkpoint selection, or threshold selection. This is documented as a **transductive temporal** protocol.
+Unknown labels are excluded from supervised loss and evaluation. GNN experiments use a **transductive temporal** protocol: future-period graph structure and features may participate in message passing, but future labels are never used for optimization, checkpoint selection, or threshold selection.
 
-Thresholds are selected on validation data only. The test window is reserved for final reporting.
+Thresholds are selected on validation data only. The test window is reserved for final reporting and post-hoc diagnostics.
 
-## Architecture
+## Architecture Decision
+
+The completed benchmark selects **XGBoost as the primary illicit-transaction risk engine**. GraphSAGE, a feature + GraphSAGE hybrid, and GAT were evaluated under the same forward temporal protocol and did not match the tabular baseline on the test window.
+
+The production-style architecture therefore separates **prediction** from **investigation**:
 
 ```text
                     Elliptic Transactions
@@ -45,43 +49,72 @@ Thresholds are selected on validation data only. The test window is reserved for
                             |
              +--------------+--------------+
              |                             |
-       Tabular Features              Graph Structure
+       165 Model Features              Graph Structure
              |                             |
           XGBoost                  PyTorch Geometric
-             |                    /        |         \
-             |              GraphSAGE    Hybrid      GAT*
-             |                    |        |          |
-             +--------------------+--------+----------+
+        Risk Engine                Research Track
+             |                    /        |        \
+             |              GraphSAGE    Hybrid      GAT
+             |                    \        |        /
+             |                     \       |       /
+             +----------------------+-------+------+
+                            Model Evidence
                                   |
-                           Model Comparison
+                         Selected Risk Engine
+                              XGBoost
                                   |
-                           Fraud Probability
+                    +-------------+-------------+
+                    |                           |
+                 FastAPI                     Neo4j
+              Risk + Explain             Relationships
+                    |                           |
+                    +-------------+-------------+
                                   |
-                         Threshold / Errors
-                                  |
-                         Investigation Layer
-                                  |
-                    Neo4j + FastAPI + Docker*
-
-* GAT implementation is complete; benchmark execution is the next local experiment.
+                       Investigator Workflow
+                  risk → explanation → neighbors
 ```
 
-## Current Benchmark
+This is intentional: the GNN experiments remain valuable as a documented model investigation, while Neo4j provides graph-native context for analysts instead of being forced into the predictive role.
 
-The first complete model comparison produced the following forward-test results:
+## Final Model Benchmark
 
-| Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test Precision | Test Recall | Test F1 |
-|---|---:|---:|---:|---:|---:|---:|
-| XGBoost, all 165 features | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
-| GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
-| Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
-| GAT | pending | pending | pending | pending | pending | pending |
+| Rank | Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test Precision | Test Recall | Test F1 |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | **XGBoost** | 0.9826 | **0.7909** | 0.9240 | 0.6785 | 0.7405 | 0.7082 |
+| 2 | Feature + GraphSAGE hybrid | 0.8174 | 0.4333 | 0.8690 | 0.3769 | 0.5826 | 0.4577 |
+| 3 | GraphSAGE | 0.7846 | 0.4193 | 0.8482 | 0.3763 | 0.5282 | 0.4395 |
+| 4 | GAT | 0.8466 | 0.3624 | 0.8584 | 0.5095 | 0.3721 | 0.4301 |
 
-### Interpretation
+**Primary metric:** PR-AUC, because the labeled classes are imbalanced.
 
-The current evidence does **not** support replacing XGBoost with the tested GraphSAGE models. The hybrid improves GraphSAGE slightly, but both GNN variants experience a large temporal generalization gap relative to the tabular baseline.
+### What the benchmark tells us
 
-This is treated as a research result rather than a project failure. The next experiments investigate whether engineered neighborhood features already capture much of the useful graph information and whether learned aggregation is sensitive to temporal graph shift.
+- XGBoost is substantially stronger on the forward test window than all tested GNN variants.
+- GAT achieved the strongest GNN validation PR-AUC (**0.8466**) but fell to **0.3624** on the forward test window, showing that validation strength did not translate into temporal robustness.
+- The feature + GraphSAGE hybrid slightly improves GraphSAGE but remains far behind XGBoost.
+- The correct engineering decision is therefore to deploy the strongest measured detector and use graph technology for investigation rather than architecture theater.
+
+## Temporal Generalization Finding
+
+The aggregate XGBoost test PR-AUC of **0.7909** hides a major temporal shift.
+
+Performance is strong through much of test time steps 35–42, for example:
+
+- t35: PR-AUC **0.9900**
+- t38: **0.9520**
+- t41: **0.9666**
+- t42: **0.8854**
+
+It then collapses from t43 onward:
+
+- t43: **0.0332**
+- t44: **0.0279**
+- t45: **0.0068**
+- t47: **0.0401**
+- t48: **0.1874**
+- t49: **0.2059**
+
+This demonstrates that a single aggregate test score is insufficient for a fraud detector expected to operate over changing transaction behavior. GraphGuard therefore retains temporal error analysis as a first-class diagnostic rather than treating the overall benchmark as the whole story.
 
 ## Graph Forensics
 
@@ -98,7 +131,7 @@ Among labeled endpoints, **95.37%** of observed edges connect nodes with the sam
 - Validation: **71.43%**
 - Test: **37.15%**
 
-That instability is important: the graph contains class structure, but the local illicit-neighborhood pattern does not remain stable across the forward test period.
+The graph therefore contains class structure, but the local illicit-neighborhood pattern does not remain stable over the forward test period.
 
 ## Feature Ablation
 
@@ -110,9 +143,52 @@ XGBoost feature-group experiments show that local transaction features carry mos
 | One-hop aggregate | 72 | 0.8178 | 0.6201 |
 | All features | 165 | 0.9826 | **0.7909** |
 
-The one-hop aggregate features are independently useful, while combining them with local features produces the strongest completed test result. This suggests that engineered neighborhood information is already predictive and may overlap with what simple message-passing layers learn.
+The one-hop aggregate features are independently useful, while combining them with local features produces the strongest completed test result. This supports the hypothesis that engineered neighborhood information may overlap with information learned by simple message-passing layers, although the experiments do not prove complete redundancy.
 
-The weak GNN result therefore **does not prove that graph information is useless**. It shows that the current learned aggregation approach is not transferring well over time on this dataset.
+## Explainability
+
+GraphGuard now exposes local XGBoost feature contributions through `POST /explain`.
+
+The explanation uses XGBoost's additive prediction contributions in **margin/log-odds space**, not probability space. Each returned feature has a signed contribution:
+
+- positive → increases the model's illicit-risk margin
+- negative → decreases the model's illicit-risk margin
+
+The API returns the risk score separately and can return the top contributing features for an investigator. Feature indices remain anonymized because the Elliptic dataset does not provide semantic names for the model features.
+
+## Investigation Layer
+
+Neo4j stores the transaction graph with:
+
+- `Transaction` nodes
+- `tx_id` uniqueness constraint
+- `time_step`
+- XGBoost `risk_score`
+- `PAYS_TO` relationships
+- risk-score index
+
+The API supports:
+
+- `GET /health` — service/model/Neo4j configuration health
+- `GET /model` — selected model and evaluation protocol metadata
+- `POST /predict` — 165-feature illicit-risk prediction
+- `POST /explain` — local model explanation
+- `GET /transactions/{tx_id}` — transaction risk lookup
+- `GET /transactions/{tx_id}/neighbors` — highest-risk connected neighbors
+
+The intended analyst workflow is:
+
+```text
+Transaction
+    ↓
+Risk score
+    ↓
+Why was it flagged?
+    ↓
+Which connected transactions are risky?
+    ↓
+Investigate the surrounding transaction cluster
+```
 
 ## Completed Work
 
@@ -122,23 +198,35 @@ The weak GNN result therefore **does not prove that graph information is useless
 - Leakage-aware XGBoost baseline
 - GraphSAGE with train-only feature scaling, class weighting, early stopping, and validation-only threshold selection
 - Feature + GraphSAGE hybrid model
+- GAT benchmark under the same controlled protocol
 - Graph diagnostics and graph-signal analysis
 - Local-vs-one-hop-vs-full feature ablation
-- Post-hoc feature-importance tooling
-- Temporal error-analysis tooling with validation-only threshold selection
-- Controlled GAT implementation using the same temporal training protocol
+- Post-hoc feature-importance analysis
+- Temporal error analysis
+- Evidence-based final architecture selection
+- Neo4j persistence/query layer
+- FastAPI inference and investigation endpoints
+- Local XGBoost explainability endpoint
 - Unit tests and pinned dependencies
+- Docker/Compose packaging
 - Investigation log documenting model evidence and hypotheses
 
-## Next Work
+## Reproducibility
 
-1. Run post-hoc feature importance on the untouched test set for interpretation only.
-2. Run the GAT benchmark under the same split and protocol.
-3. Run temporal error analysis to identify periods and transaction patterns where performance degrades.
-4. Directly test redundancy between engineered one-hop features and learned neighborhood aggregation.
-5. Select the final modeling direction from evidence rather than from architecture preference.
-6. Build the Neo4j investigation layer around the selected model and graph relationships.
-7. Add FastAPI inference/investigation endpoints, Docker packaging, explainability, CI, and reproducible evaluation artifacts.
+The downloaded dataset is intentionally kept outside GitHub. Code, configuration, tests, and documentation are versioned. Model checkpoints and generated reports are produced locally by the documented scripts.
+
+Typical validation commands:
+
+```powershell
+python -m pytest -q
+python scripts\train_xgboost.py
+python scripts\train_graphsage.py
+python scripts\train_hybrid.py
+python scripts\train_gat.py
+python scripts\model_comparison_report.py
+python scripts\feature_importance_report.py
+python scripts\temporal_error_analysis.py
+```
 
 ## Modeling Rules
 
@@ -148,7 +236,8 @@ The weak GNN result therefore **does not prove that graph information is useless
 - Test labels are never used for model selection or threshold tuning.
 - A GNN is not considered superior unless measured forward-test performance supports that conclusion.
 - Neo4j is an investigation layer, not a substitute for the GNN training graph.
-- The downloaded dataset remains outside GitHub; code, configuration, tests, reports, and documentation are versioned.
+- Explainability outputs must not be presented as causal explanations; they are local model contributions.
+- The downloaded dataset remains outside GitHub.
 
 ## License
 
