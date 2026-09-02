@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from xgboost import XGBClassifier
 
+from graphguard.explainability import explain_xgboost
 from graphguard.neo4j_store import Neo4jStore
 
 
@@ -29,6 +30,11 @@ _store: Neo4jStore | None = None
 
 class PredictionRequest(BaseModel):
     features: Annotated[list[float], Field(min_length=165, max_length=165)]
+
+
+class ExplainRequest(BaseModel):
+    features: Annotated[list[float], Field(min_length=165, max_length=165)]
+    top_k: int = Field(default=10, ge=1, le=50)
 
 
 class PredictionResponse(BaseModel):
@@ -53,6 +59,10 @@ def get_store() -> Neo4jStore:
     if _store is None:
         _store = Neo4jStore()
     return _store
+
+
+def _features(values: list[float]) -> np.ndarray:
+    return np.asarray(values, dtype=np.float32).reshape(1, EXPECTED_FEATURES)
 
 
 @app.get("/health")
@@ -81,13 +91,24 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    features = np.asarray(request.features, dtype=np.float32).reshape(1, -1)
+    features = _features(request.features)
     probability = float(model.predict_proba(features)[0, 1])
     return PredictionResponse(
         risk_score=probability,
         illicit=probability >= THRESHOLD,
         threshold=THRESHOLD,
     )
+
+
+@app.post("/explain")
+def explain(request: ExplainRequest) -> dict[str, object]:
+    try:
+        model = get_model()
+        return explain_xgboost(model, _features(request.features), top_k=request.top_k)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/transactions/{tx_id}")
