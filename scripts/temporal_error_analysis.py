@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+import yaml
 
-from graphguard.elliptic import load_elliptic
-from graphguard.splits import make_temporal_masks
+from graphguard.elliptic import load_elliptic_graph
+from graphguard.splits import make_temporal_split
 
 
 def average_precision(y_true: np.ndarray, probability: np.ndarray) -> float:
@@ -30,8 +31,15 @@ def roc_auc(y_true: np.ndarray, probability: np.ndarray) -> float:
     if n_pos == 0 or n_neg == 0:
         return float("nan")
     order = np.argsort(probability, kind="mergesort")
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(order) + 1)
+    sorted_probability = probability[order]
+    ranks = np.empty(len(order), dtype=float)
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while end < len(order) and sorted_probability[end] == sorted_probability[start]:
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
     return float((ranks[positives].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
 
 
@@ -78,32 +86,43 @@ def main() -> None:
     parser.add_argument("--output", default="artifacts/error_analysis/temporal_error_analysis.json")
     args = parser.parse_args()
 
-    config = json.loads(json.dumps(__import__("yaml").safe_load(Path(args.config).read_text())))
-    dataset = load_elliptic(config["dataset"])
-    masks = make_temporal_masks(dataset.time_step, dataset.y, config["splits"])
+    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    dataset = load_elliptic_graph(config["dataset"]["root"])
+    split_cfg = config["splits"]
+    split = make_temporal_split(
+        dataset.time_step,
+        dataset.y,
+        train_end=int(split_cfg["train_end"]),
+        validation_start=int(split_cfg["validation_start"]),
+        validation_end=int(split_cfg["validation_end"]),
+        test_start=int(split_cfg["test_start"]),
+        unknown_label=int(config["dataset"]["unknown_label"]),
+    )
 
-    validation = masks["validation"]
-    test = masks["test"]
-    validation_probability = load_xgb_probability(Path(args.model), dataset.x[validation])
-    test_probability = load_xgb_probability(Path(args.model), dataset.x[test])
-    threshold = select_threshold(dataset.y[validation], validation_probability)
+    validation = split.validation_mask.numpy()
+    test = split.test_mask.numpy()
+    x = dataset.x.numpy()
+    y = dataset.y.numpy()
+    validation_probability = load_xgb_probability(Path(args.model), x[validation])
+    test_probability = load_xgb_probability(Path(args.model), x[test])
+    threshold = select_threshold(y[validation], validation_probability)
 
-    test_times = dataset.time_step[test]
-    test_labels = dataset.y[test]
+    test_times = dataset.time_step.numpy()[test]
+    test_labels = y[test]
     rows = []
     for timestep in sorted(np.unique(test_times).tolist()):
         mask = test_times == timestep
-        y = test_labels[mask]
+        labels = test_labels[mask]
         probability = test_probability[mask]
-        metrics = binary_metrics(y, probability, threshold)
+        metrics = binary_metrics(labels, probability, threshold)
         rows.append({
             "time_step": int(timestep),
-            "labeled_transactions": int(len(y)),
-            "licit": int(np.sum(y == 0)),
-            "illicit": int(np.sum(y == 1)),
-            "illicit_rate": float(np.mean(y == 1)),
-            "pr_auc": average_precision(y, probability),
-            "roc_auc": roc_auc(y, probability),
+            "labeled_transactions": int(len(labels)),
+            "licit": int(np.sum(labels == 0)),
+            "illicit": int(np.sum(labels == 1)),
+            "illicit_rate": float(np.mean(labels == 1)),
+            "pr_auc": average_precision(labels, probability),
+            "roc_auc": roc_auc(labels, probability),
             **metrics,
         })
 
@@ -122,7 +141,7 @@ def main() -> None:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2) + "\n")
+    output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(f"report: {output}")
 
