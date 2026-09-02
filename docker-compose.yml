@@ -6,8 +6,13 @@ services:
     environment:
       GRAPHGUARD_MODEL: /app/artifacts/baseline/xgboost.json
       GRAPHGUARD_THRESHOLD: "0.36"
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in your environment}
     volumes:
       - ./artifacts/baseline:/app/artifacts/baseline:ro
+    depends_on:
+      - neo4j
     restart: unless-stopped
 
   neo4j:
@@ -16,7 +21,7 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: neo4j/change-me-in-local-env
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in your environment}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
