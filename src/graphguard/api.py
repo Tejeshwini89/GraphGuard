@@ -9,6 +9,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from xgboost import XGBClassifier
 
+from graphguard.neo4j_store import Neo4jStore
+
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(os.getenv("GRAPHGUARD_MODEL", ROOT / "artifacts" / "baseline" / "xgboost.json"))
@@ -18,10 +20,11 @@ EXPECTED_FEATURES = 165
 app = FastAPI(
     title="GraphGuard API",
     version="0.1.0",
-    description="Inference API for illicit Bitcoin transaction risk scoring.",
+    description="Inference and graph-investigation API for illicit Bitcoin transaction risk scoring.",
 )
 
 _model: XGBClassifier | None = None
+_store: Neo4jStore | None = None
 
 
 class PredictionRequest(BaseModel):
@@ -45,11 +48,19 @@ def get_model() -> XGBClassifier:
     return _model
 
 
+def get_store() -> Neo4jStore:
+    global _store
+    if _store is None:
+        _store = Neo4jStore()
+    return _store
+
+
 @app.get("/health")
 def health() -> dict[str, str | bool]:
     return {
         "status": "ok",
         "model_available": MODEL_PATH.exists(),
+        "neo4j_configured": bool(os.getenv("NEO4J_PASSWORD")),
     }
 
 
@@ -77,3 +88,25 @@ def predict(request: PredictionRequest) -> PredictionResponse:
         illicit=probability >= THRESHOLD,
         threshold=THRESHOLD,
     )
+
+
+@app.get("/transactions/{tx_id}")
+def transaction(tx_id: int) -> dict:
+    try:
+        result = get_store().get_transaction(tx_id)
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return result
+
+
+@app.get("/transactions/{tx_id}/neighbors")
+def suspicious_neighbors(tx_id: int, limit: int = 20) -> dict[str, object]:
+    if not 1 <= limit <= 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+    try:
+        neighbors = get_store().get_suspicious_neighbors(tx_id, limit)
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"tx_id": tx_id, "neighbors": neighbors}
