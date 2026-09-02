@@ -11,9 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
 COPY config.yaml ./config.yaml
-COPY artifacts/baseline ./artifacts/baseline
 
 ENV PYTHONPATH=/app/src
 EXPOSE 8000
 
+# The trained model is intentionally kept out of Git and mounted at runtime.
 CMD ["uvicorn", "graphguard.api:app", "--host", "0.0.0.0", "--port", "8000"]
